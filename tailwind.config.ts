@@ -24,6 +24,7 @@ export default {
           secondary: "#7E69AB",
           background: "#F1F0FB",
         },
+        border: "hsl(var(--border))",
       },
       animation: {
         "button-hover": "button-hover 0.3s ease-in-out",
