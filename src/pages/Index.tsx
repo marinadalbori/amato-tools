@@ -37,38 +37,59 @@ const Index = () => {
       <div className="container mx-auto px-3 sm:px-4 max-w-6xl">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-5xl sm:text-6xl font-black text-white mb-4 tracking-tight">
-            <span className="text-indigo-400">M</span>P PRO
-          </h1>
-          <p className="text-xl text-slate-400 font-medium tracking-wide">
-            <span className="text-indigo-400">M</span>ARIO<span className="text-indigo-400">P</span>AOLO PRO
-          </p>
+          <div className="inline-block">
+            <div className="relative">
+              <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700/50 shadow-2xl relative">
+                {/* Effetto glow */}
+                <div className="absolute inset-0 rounded-xl bg-indigo-500/20 blur-xl"></div>
+                
+                {/* Logo contenuto */}
+                <div className="relative flex items-baseline justify-center">
+                  <span className="text-6xl sm:text-7xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-indigo-600">M</span>
+                  <span className="text-6xl sm:text-7xl font-black text-white">P</span>
+                  <span className="ml-2 text-3xl sm:text-4xl font-bold text-white">PRO</span>
+                </div>
+                
+                {/* Linea decorativa sotto */}
+                <div className="mt-2 flex justify-center gap-2">
+                  <div className="h-1.5 w-12 bg-slate-400 rounded"></div>
+                  <div className="h-1.5 w-12 bg-indigo-400 rounded"></div>
+                  <div className="h-1.5 w-12 bg-purple-400 rounded"></div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <span className="text-lg font-medium tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-slate-300 via-indigo-400 to-purple-400">
+                mariopaoloPRO
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* Menu Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-4xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
           {menuItems.map((item) => (
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
-              className="group relative bg-slate-800/40 backdrop-blur-sm rounded-2xl p-6 border border-slate-700/50 shadow-lg hover:shadow-xl transition-all duration-300 hover:bg-slate-800/60 text-left h-full"
+              className="group relative bg-slate-800/40 backdrop-blur-sm rounded-xl p-4 border border-slate-700/50 shadow-lg hover:shadow-xl transition-all duration-300 hover:bg-slate-800/60 text-left"
             >
-              <div className="flex flex-col items-start gap-4">
-                <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition-transform duration-300">
-                  <item.icon className="w-8 h-8" />
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition-transform duration-300">
+                  <item.icon className="w-6 h-6" />
                 </div>
-                <div>
-                  <h2 className="text-xl font-semibold text-white mb-2 group-hover:text-indigo-400 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg font-semibold text-white group-hover:text-indigo-400 transition-colors truncate">
                     {item.title}
                   </h2>
-                  <p className="text-slate-400 group-hover:text-slate-300 transition-colors">
+                  <p className="text-sm text-slate-400 group-hover:text-slate-300 transition-colors line-clamp-2">
                     {item.description}
                   </p>
                 </div>
-                <div className="absolute bottom-6 right-6 w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transform translate-x-4 group-hover:translate-x-0 transition-all duration-300">
+                <div className="self-center w-6 h-6 rounded-full bg-indigo-500/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transform translate-x-2 group-hover:translate-x-0 transition-all duration-300">
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5 text-indigo-400"
+                    className="h-4 w-4 text-indigo-400"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
