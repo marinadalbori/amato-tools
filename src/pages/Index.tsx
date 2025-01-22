@@ -59,7 +59,7 @@ const Index = () => {
               </div>
             </div>
             <div className="mt-4">
-              <span className="text-lg font-medium tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-slate-300 via-indigo-400 to-purple-400">
+              <span className="text-xl sm:text-2xl font-medium tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-slate-300 via-indigo-400 to-purple-400">
                 mariopaoloPRO
               </span>
             </div>

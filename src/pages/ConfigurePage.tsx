@@ -11,40 +11,33 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Database } from "@/integrations/supabase/database.types";
-import { ChevronLeftIcon, WrenchScrewdriverIcon, PencilIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, WrenchScrewdriverIcon, PencilIcon, TrashIcon, PlusIcon, InformationCircleIcon } from "@heroicons/react/24/outline";
 import { useNavigate } from "react-router-dom";
-
-// Definizione delle tipologie disponibili
-const tipologieDisponibili = [
-  { id: "battente1", label: "Battente 1 Anta" },
-  { id: "battente2", label: "Battente 2 Ante" },
-  { id: "fisso", label: "Fisso" },
-  { id: "scorrevoleLinea", label: "Scorrevole in linea" },
-  { id: "scorrevoleAlzante", label: "Scorrevole alzante" },
-  { id: "porta", label: "Porta" },
-] as const;
-
-// Definizione dei profili per tipologia
-const profiliPerTipologia = {
-  battente1: ["Telaio", "Anta", "Fermavetro"],
-  battente2: ["Telaio", "Anta", "Fermavetro", "Montante"],
-  fisso: ["Telaio", "Fermavetro"],
-  scorrevoleLinea: ["Telaio", "Anta Scorrevole", "Fermavetro", "Binario"],
-  scorrevoleAlzante: ["Telaio", "Anta Alzante", "Fermavetro", "Binario Alzante"],
-  porta: ["Telaio Porta", "Anta Porta", "Fermavetro"],
-} as const;
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 type Tables = Database['public']['Tables'];
-type SeriesRow = Tables['series']['Row'];
-type SeriesInsert = Tables['series']['Insert'];
-type SeriesFrameTypesInsert = Tables['series_frame_types']['Insert'];
-type SeriesProfilesInsert = Tables['series_profiles']['Insert'];
+type FrameType = Tables['frame_types']['Row'];
+type Series = Tables['series']['Row'];
+type SeriesFrameType = Tables['series_frame_types']['Row'];
+type Profile = Tables['profiles']['Row'];
+
+interface ProfileConfig {
+  prezzoMetro: number;
+  lunghezzaBarra: number;
+  percentualeSfrido: number;
+  minimoRiutilizzabile: number;
+}
 
 // Schema di validazione del form
 const formSchema = z.object({
-  nome: z.string().min(1, "Il nome è obbligatorio"),
-  tipologie: z.array(z.string()).min(1, "Seleziona almeno una tipologia"),
-  profili: z.record(z.object({
+  name: z.string().min(1, "Il nome è obbligatorio"),
+  frameTypeIds: z.array(z.string()).min(1, "Seleziona almeno una tipologia"),
+  profiles: z.record(z.object({
     prezzoMetro: z.number().min(0, "Il prezzo deve essere maggiore o uguale a 0"),
     lunghezzaBarra: z.number().min(0, "La lunghezza deve essere maggiore o uguale a 0"),
     percentualeSfrido: z.number().min(0, "La percentuale di sfrido deve essere maggiore o uguale a 0"),
@@ -54,74 +47,232 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-interface SerieConfigurataExtended {
-  id: string;
-  nome: string;
-  tipologie: string[];
-  profili: Record<string, {
-    prezzoMetro: number;
-    lunghezzaBarra: number;
-    percentualeSfrido: number;
-    minimoRiutilizzabile: number;
-  }>;
+interface SerieConfigurataExtended extends Series {
+  frameTypes: FrameType[];
+  profiles: Record<string, ProfileConfig>;
 }
+
+type ProfileRuleResponse = {
+  profiles: Profile;
+}
+
+type FrameTypeJoin = {
+  frame_types: {
+    id: string;
+    label: string;
+    created_at: string;
+    updated_at: string;
+  };
+};
+
+type SeriesFrameTypeJoin = {
+  frame_type_id: string;
+  frame_types: {
+    id: string;
+    label: string;
+    created_at: string;
+    updated_at: string;
+  };
+};
 
 const ConfigurePage = () => {
   const [serieToEdit, setSerieToEdit] = useState<string | null>(null);
+  const [selectedProfiles, setSelectedProfiles] = useState<Profile[]>([]);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  // Query per caricare le serie
-  const { data: serieConfigurate, isLoading } = useQuery({
-    queryKey: ['serie'],
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      name: "",
+      frameTypeIds: [],
+      profiles: {},
+    },
+  });
+
+  // Query per caricare i profili necessari per le tipologie selezionate
+  const { data: profilesForTypes, isLoading: isLoadingProfiles } = useQuery({
+    queryKey: ['profiles', form?.watch('frameTypeIds')],
     queryFn: async () => {
-      const { data: series, error } = await supabase
-        .from('series')
+      const selectedTypes = form?.watch('frameTypeIds') || [];
+      if (selectedTypes.length === 0) return [];
+
+      // Prima recuperiamo tutti i profile_id necessari
+      const { data: rules, error: rulesError } = await supabase
+        .from('frame_type_profile_rules')
+        .select('profile_id')
+        .in('frame_type_id', selectedTypes);
+
+      if (rulesError) throw rulesError;
+
+      // Poi recuperiamo i profili completi
+      const profileIds = [...new Set(rules.map(r => r.profile_id))];
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', profileIds);
+
+      if (profilesError) throw profilesError;
+
+      // Prepopola i valori di default per ogni profilo
+      const currentProfiles = form.getValues('profiles');
+      profiles.forEach(profile => {
+        if (!currentProfiles[profile.id]) {
+          form.setValue(`profiles.${profile.id}`, {
+            prezzoMetro: 0,
+            lunghezzaBarra: 6,
+            percentualeSfrido: 5,
+            minimoRiutilizzabile: 0.5,
+          });
+        }
+      });
+
+      setSelectedProfiles(profiles);
+      return profiles;
+    },
+    enabled: form?.watch('frameTypeIds')?.length > 0,
+  });
+
+  // Query per caricare le tipologie di telaio che hanno regole di profilo associate
+  const { data: frameTypes, isLoading: isLoadingFrameTypes } = useQuery({
+    queryKey: ['frameTypes'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('frame_type_profile_rules')
         .select(`
-          *,
-          series_frame_types ( * ),
-          series_profiles ( * )
-        `);
+          frame_types!inner (
+            id,
+            label,
+            created_at,
+            updated_at
+          )
+        `)
+        .order('frame_type_id');
 
-      if (error) {
-        console.error('Errore nel caricamento delle serie:', error);
-        throw error;
-      }
+      if (error) throw error;
 
+      const typedData = data as unknown as FrameTypeJoin[];
+      
+      // Rimuovo i duplicati
+      return Array.from(
+        new Map(
+          typedData
+            .map(item => item.frame_types)
+            .filter(Boolean)
+            .map(ft => [ft.id, ft])
+        ).values()
+      );
+    },
+  });
+
+  // Query per caricare le serie
+  const { data: serieConfigurate, isLoading: isLoadingSeries } = useQuery({
+    queryKey: ['series'],
+    queryFn: async () => {
+      const { data: series, error: seriesError } = await supabase
+        .from('series')
+        .select('*')
+        .order('name');
+
+      if (seriesError) throw seriesError;
       if (!series) return [];
 
-      return series.map(serie => ({
-        id: serie.id,
-        nome: serie.nome,
-        tipologie: serie.series_frame_types?.map(t => t.tipologia) || [],
-        profili: serie.series_profiles?.reduce((acc, profilo) => ({
-          ...acc,
-          [profilo.nome_profilo]: {
-            prezzoMetro: profilo.prezzo_metro,
-            lunghezzaBarra: profilo.lunghezza_barra,
-            percentualeSfrido: profilo.percentuale_sfrido,
-            minimoRiutilizzabile: profilo.minimo_riutilizzabile,
+      const seriesWithTypesAndProfiles = await Promise.all(
+        series.map(async (serie) => {
+          // Recupera tipologie
+          const { data: frameTypes, error: frameTypesError } = await supabase
+            .from('series_frame_types')
+            .select(`
+              frame_type_id,
+              frame_types!inner (
+                id,
+                label,
+                created_at,
+                updated_at
+              )
+            `)
+            .eq('series_id', serie.id);
+
+          if (frameTypesError) {
+            console.error(`Errore nel recupero delle tipologie per serie ${serie.name}:`, frameTypesError);
+            return {
+              ...serie,
+              frameTypes: [],
+              profiles: {},
+            };
           }
-        }), {}) || {}
-      })) as SerieConfigurataExtended[];
+
+          const typedFrameTypes = frameTypes as unknown as SeriesFrameTypeJoin[] || [];
+
+          // Recupera profili
+          const { data: profiles, error: profilesError } = await supabase
+            .from('series_profiles')
+            .select('*')
+            .eq('series_id', serie.id);
+
+          if (profilesError) {
+            console.error(`Errore nel recupero dei profili per serie ${serie.name}:`, profilesError);
+            return {
+              ...serie,
+              frameTypes: typedFrameTypes.map(ft => ft.frame_types),
+              profiles: {},
+            };
+          }
+
+          const profileConfigs = (profiles || []).reduce<Record<string, ProfileConfig>>((acc, profile) => ({
+            ...acc,
+            [profile.profile_id]: {
+              prezzoMetro: profile.cost_per_meter,
+              lunghezzaBarra: profile.bar_length,
+              percentualeSfrido: profile.scrap_percentage,
+              minimoRiutilizzabile: profile.min_reusable_length,
+            },
+          }), {});
+
+          return {
+            ...serie,
+            frameTypes: typedFrameTypes.map(ft => ft.frame_types),
+            profiles: profileConfigs,
+          };
+        })
+      );
+
+      return seriesWithTypesAndProfiles;
+    },
+  });
+
+  // Mutation per verificare se esiste già una serie con lo stesso nome
+  const checkSeriesNameMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const { data, error } = await supabase
+        .from('series')
+        .select('id')
+        .eq('name', name)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data && data.id !== serieToEdit) {
+        throw new Error('Esiste già una serie con questo nome');
+      }
     },
   });
 
   // Mutation per salvare una serie
   const saveSerieMutation = useMutation({
     mutationFn: async (data: FormValues) => {
+      // Prima verifica se il nome è già in uso
+      await checkSeriesNameMutation.mutateAsync(data.name);
+
       if (serieToEdit) {
         // Aggiornamento serie esistente
-        const { data: serie, error: serieError } = await supabase
+        const { error: updateError } = await supabase
           .from('series')
-          .update({ nome: data.nome })
-          .eq('id', serieToEdit)
-          .select()
-          .single();
+          .update({ name: data.name })
+          .eq('id', serieToEdit);
 
-        if (serieError) throw serieError;
+        if (updateError) throw updateError;
 
-        // Elimina tipologie esistenti
+        // Elimina associazioni esistenti
         const { error: deleteTypesError } = await supabase
           .from('series_frame_types')
           .delete()
@@ -129,13 +280,13 @@ const ConfigurePage = () => {
 
         if (deleteTypesError) throw deleteTypesError;
 
-        // Inserisce nuove tipologie
+        // Inserisce nuove associazioni
         const { error: insertTypesError } = await supabase
           .from('series_frame_types')
           .insert(
-            data.tipologie.map(tipologia => ({
+            data.frameTypeIds.map(frameTypeId => ({
               series_id: serieToEdit,
-              tipologia,
+              frame_type_id: frameTypeId,
             }))
           );
 
@@ -150,71 +301,66 @@ const ConfigurePage = () => {
         if (deleteProfilesError) throw deleteProfilesError;
 
         // Inserisce nuovi profili
-        const profiliToInsert: SeriesProfilesInsert[] = Object.entries(data.profili).map(([nome_profilo, profilo]) => ({
-          series_id: serieToEdit,
-          nome_profilo,
-          prezzo_metro: profilo.prezzoMetro,
-          lunghezza_barra: profilo.lunghezzaBarra,
-          percentuale_sfrido: profilo.percentualeSfrido,
-          minimo_riutilizzabile: profilo.minimoRiutilizzabile,
-        }));
-
         const { error: insertProfilesError } = await supabase
           .from('series_profiles')
-          .insert(profiliToInsert);
+          .insert(
+            Object.entries(data.profiles).map(([profileId, config]) => ({
+              series_id: serieToEdit,
+              profile_id: profileId,
+              cost_per_meter: config.prezzoMetro,
+              bar_length: config.lunghezzaBarra,
+              scrap_percentage: config.percentualeSfrido,
+              min_reusable_length: config.minimoRiutilizzabile,
+            }))
+          );
 
         if (insertProfilesError) throw insertProfilesError;
-
-        return serie;
       } else {
         // Inserimento nuova serie
-        const { data: serie, error: serieError } = await supabase
+        const { data: newSeries, error: insertSeriesError } = await supabase
           .from('series')
-          .insert({ nome: data.nome })
+          .insert({ name: data.name })
           .select()
           .single();
 
-        if (serieError) throw serieError;
+        if (insertSeriesError) throw insertSeriesError;
 
-        // Inserisce tipologie
+        // Inserisce associazioni tipologie
         const { error: insertTypesError } = await supabase
           .from('series_frame_types')
           .insert(
-            data.tipologie.map(tipologia => ({
-              series_id: serie.id,
-              tipologia,
+            data.frameTypeIds.map(frameTypeId => ({
+              series_id: newSeries.id,
+              frame_type_id: frameTypeId,
             }))
           );
 
         if (insertTypesError) throw insertTypesError;
 
         // Inserisce profili
-        const profiliToInsert: SeriesProfilesInsert[] = Object.entries(data.profili).map(([nome_profilo, profilo]) => ({
-          series_id: serie.id,
-          nome_profilo,
-          prezzo_metro: profilo.prezzoMetro,
-          lunghezza_barra: profilo.lunghezzaBarra,
-          percentuale_sfrido: profilo.percentualeSfrido,
-          minimo_riutilizzabile: profilo.minimoRiutilizzabile,
-        }));
-
         const { error: insertProfilesError } = await supabase
           .from('series_profiles')
-          .insert(profiliToInsert);
+          .insert(
+            Object.entries(data.profiles).map(([profileId, config]) => ({
+              series_id: newSeries.id,
+              profile_id: profileId,
+              cost_per_meter: config.prezzoMetro,
+              bar_length: config.lunghezzaBarra,
+              scrap_percentage: config.percentualeSfrido,
+              min_reusable_length: config.minimoRiutilizzabile,
+            }))
+          );
 
         if (insertProfilesError) throw insertProfilesError;
-
-        return serie;
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['serie'] });
+      queryClient.invalidateQueries({ queryKey: ['series'] });
       toast.success(serieToEdit ? 'Serie aggiornata con successo' : 'Serie creata con successo');
       form.reset();
       setSerieToEdit(null);
     },
-    onError: (error) => {
-      console.error('Errore durante il salvataggio:', error);
+    onError: (error: Error) => {
       toast.error('Si è verificato un errore: ' + error.message);
     },
   });
@@ -222,6 +368,7 @@ const ConfigurePage = () => {
   // Mutation per eliminare una serie
   const deleteSerieMutation = useMutation({
     mutationFn: async (id: string) => {
+      // Le associazioni verranno eliminate automaticamente grazie alla foreign key constraint
       const { error } = await supabase
         .from('series')
         .delete()
@@ -230,30 +377,11 @@ const ConfigurePage = () => {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['serie'] });
+      queryClient.invalidateQueries({ queryKey: ['series'] });
       toast.success('Serie eliminata con successo');
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error('Si è verificato un errore durante l\'eliminazione: ' + error.message);
-    },
-  });
-
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      nome: "",
-      tipologie: [],
-      profili: Object.fromEntries(
-        Object.values(profiliPerTipologia).flat().map(profilo => [
-          profilo,
-          {
-            prezzoMetro: 0,
-            lunghezzaBarra: 0,
-            percentualeSfrido: 5,
-            minimoRiutilizzabile: 0.5,
-          }
-        ])
-      ),
     },
   });
 
@@ -262,22 +390,10 @@ const ConfigurePage = () => {
     if (serieToEdit && serieConfigurate) {
       const serie = serieConfigurate.find(s => s.id === serieToEdit);
       if (serie) {
-        const defaultProfili = Object.fromEntries(
-          getProfiliUnici().map(profilo => [
-            profilo,
-            serie.profili[profilo] || {
-              prezzoMetro: 0,
-              lunghezzaBarra: 0,
-              percentualeSfrido: 5,
-              minimoRiutilizzabile: 0.5,
-            }
-          ])
-        );
-
         form.reset({
-          nome: serie.nome,
-          tipologie: serie.tipologie,
-          profili: defaultProfili,
+          name: serie.name,
+          frameTypeIds: serie.frameTypes.map(ft => ft.id),
+          profiles: serie.profiles,
         });
       }
     }
@@ -297,17 +413,7 @@ const ConfigurePage = () => {
     }
   };
 
-  const tipologieSelezionate = form.watch("tipologie");
-  
-  // Ottiene tutti i profili unici per le tipologie selezionate
-  const getProfiliUnici = () => {
-    const profili = new Set<string>();
-    tipologieSelezionate.forEach(tipologia => {
-      const profiliTipologia = profiliPerTipologia[tipologia as keyof typeof profiliPerTipologia] || [];
-      profiliTipologia.forEach(profilo => profili.add(profilo));
-    });
-    return Array.from(profili);
-  };
+  const isLoading = isLoadingFrameTypes || isLoadingSeries;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 py-4 sm:py-8 text-slate-200">
@@ -329,130 +435,155 @@ const ConfigurePage = () => {
           </h1>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Sezione sinistra: tabella serie configurate */}
-          <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl shadow-lg border border-slate-700/50 p-4 sm:p-6 transition-all duration-300 hover:shadow-xl hover:bg-slate-800/50">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2 mb-6">
+        {/* Tabella serie configurate */}
+        <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl shadow-lg border border-slate-700/50 p-4 sm:p-6 transition-all duration-300 hover:shadow-xl hover:bg-slate-800/50 mb-6">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
               Serie Configurate
               <span className="text-sm font-normal text-slate-400">({serieConfigurate?.length || 0})</span>
             </h2>
-            
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
-              <div className="min-w-full inline-block align-middle">
-                <div className="overflow-hidden">
-                  <table className="min-w-full divide-y divide-slate-700/50">
-                    <thead>
+          </div>
+          
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <div className="min-w-full inline-block align-middle">
+              <div className="overflow-hidden">
+                <table className="min-w-full divide-y divide-slate-700/50">
+                  <thead>
+                    <tr>
+                      <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Nome Serie</th>
+                      <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Tipologie Associate</th>
+                      <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {isLoading ? (
                       <tr>
-                        <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Nome Serie</th>
-                        <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Tipologie</th>
-                        <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Azioni</th>
+                        <td colSpan={3} className="px-4 sm:px-6 py-4 text-center text-slate-400">Caricamento...</td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-700/50">
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={3} className="px-4 sm:px-6 py-4 text-center text-slate-400">Caricamento...</td>
-                        </tr>
-                      ) : serieConfigurate?.map((serie) => (
+                    ) : serieConfigurate?.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-4 sm:px-6 py-8 text-center text-slate-400">
+                          <div className="flex flex-col items-center gap-2">
+                            <InformationCircleIcon className="w-6 h-6" />
+                            <p>Nessuna serie configurata</p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      serieConfigurate?.map((serie) => (
                         <tr key={serie.id} className="hover:bg-slate-700/30 transition-colors duration-200">
-                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-slate-200">{serie.nome}</td>
-                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-slate-200">
-                            {serie.tipologie.map(t => (
-                              tipologieDisponibili.find(td => td.id === t)?.label || t
-                            )).join(", ")}
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-slate-200">{serie.name}</td>
+                          <td className="px-4 sm:px-6 py-4 text-slate-200">
+                            {serie.frameTypes.map(ft => ft.label).join(", ")}
+                            <span className="text-slate-400 text-sm ml-2">
+                              ({serie.frameTypes.length})
+                            </span>
                           </td>
                           <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                             <div className="flex gap-2">
                               <button
                                 onClick={() => handleEdit(serie.id)}
                                 className="text-indigo-400 hover:text-indigo-300 p-1.5 rounded-lg hover:bg-indigo-500/20 transition-all duration-200"
+                                title="Modifica serie"
                               >
                                 <PencilIcon className="h-5 w-5" />
                               </button>
                               <button
                                 onClick={() => handleDelete(serie.id)}
                                 className="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/20 transition-all duration-200"
+                                title="Elimina serie"
                               >
                                 <TrashIcon className="h-5 w-5" />
                               </button>
                             </div>
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Sezione destra: form configurazione */}
-          <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl shadow-lg border border-slate-700/50 p-4 sm:p-6 transition-all duration-300 hover:shadow-xl hover:bg-slate-800/50">
-            <h2 className="text-xl font-semibold text-white mb-6">Configura Serie</h2>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                <FormField
-                  control={form.control}
-                  name="nome"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Nome Serie</FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="Inserisci il nome della serie" 
-                          {...field}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <div className="space-y-4">
-                  <FormLabel className="text-slate-200">Tipologie</FormLabel>
-                  <div className="grid grid-cols-2 gap-4">
-                    {tipologieDisponibili.map((tipologia) => (
-                      <FormField
-                        key={tipologia.id}
-                        control={form.control}
-                        name="tipologie"
-                        render={({ field }) => (
-                          <FormItem className="flex items-center space-x-2">
-                            <FormControl>
-                              <Checkbox
-                                checked={field.value?.includes(tipologia.id)}
-                                onCheckedChange={(checked) => {
-                                  const value = field.value || [];
-                                  if (checked) {
-                                    field.onChange([...value, tipologia.id]);
-                                  } else {
-                                    field.onChange(value.filter((v) => v !== tipologia.id));
-                                  }
-                                }}
-                                className="border-slate-700 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
-                              />
-                            </FormControl>
-                            <FormLabel className="font-normal text-slate-200">
-                              {tipologia.label}
-                            </FormLabel>
-                          </FormItem>
-                        )}
+        {/* Form configurazione */}
+        <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl shadow-lg border border-slate-700/50 p-4 sm:p-6 transition-all duration-300 hover:shadow-xl hover:bg-slate-800/50">
+          <h2 className="text-xl font-semibold text-white mb-6">
+            {serieToEdit ? 'Modifica Serie' : 'Nuova Serie'}
+          </h2>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-slate-200">Nome Serie</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="Inserisci il nome della serie" 
+                        {...field}
+                        className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
                       />
-                    ))}
-                  </div>
-                </div>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
 
-                {tipologieSelezionate.length > 0 && (
-                  <div className="space-y-4">
-                    <FormLabel className="text-slate-200">Configurazione Profili</FormLabel>
-                    <div className="grid gap-4">
-                      {getProfiliUnici().map((profilo) => (
-                        <div key={profilo} className="p-4 border border-slate-700/50 rounded-xl bg-slate-800/50">
-                          <h4 className="font-medium text-slate-200 mb-3">{profilo}</h4>
+              <div className="space-y-4">
+                <FormLabel className="text-slate-200">Tipologie</FormLabel>
+                <div className="grid grid-cols-2 gap-4">
+                  {frameTypes?.map((frameType) => (
+                    <FormField
+                      key={frameType.id}
+                      control={form.control}
+                      name="frameTypeIds"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center space-x-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value?.includes(frameType.id)}
+                              onCheckedChange={(checked) => {
+                                const value = field.value || [];
+                                if (checked) {
+                                  field.onChange([...value, frameType.id]);
+                                } else {
+                                  field.onChange(value.filter((v) => v !== frameType.id));
+                                }
+                              }}
+                              className="border-slate-700 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
+                            />
+                          </FormControl>
+                          <FormLabel className="font-normal text-slate-200">
+                            {frameType.label}
+                          </FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Configurazione Profili */}
+              {selectedProfiles && selectedProfiles.length > 0 && (
+                <div className="space-y-6">
+                  <FormLabel className="text-slate-200">Configurazione Profili</FormLabel>
+                  <Accordion type="single" collapsible className="space-y-4">
+                    {selectedProfiles.map((profile) => (
+                      <AccordionItem 
+                        key={profile.id} 
+                        value={profile.id}
+                        className="border border-slate-700/50 rounded-xl bg-slate-800/50 px-4"
+                      >
+                        <AccordionTrigger className="py-4 text-slate-200 hover:text-slate-100 hover:no-underline">
+                          {profile.name}
+                        </AccordionTrigger>
+                        <AccordionContent className="pb-4">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <FormField
                               control={form.control}
-                              name={`profili.${profilo}.prezzoMetro`}
+                              name={`profiles.${profile.id}.prezzoMetro`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel className="text-slate-300">Prezzo al Metro (€)</FormLabel>
@@ -463,7 +594,6 @@ const ConfigurePage = () => {
                                       min="0"
                                       placeholder="0.00"
                                       {...field}
-                                      value={field.value || 0}
                                       onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                                       className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
                                     />
@@ -473,7 +603,7 @@ const ConfigurePage = () => {
                             />
                             <FormField
                               control={form.control}
-                              name={`profili.${profilo}.lunghezzaBarra`}
+                              name={`profiles.${profile.id}.lunghezzaBarra`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel className="text-slate-300">Lunghezza Barra (m)</FormLabel>
@@ -484,7 +614,6 @@ const ConfigurePage = () => {
                                       min="0"
                                       placeholder="0.0"
                                       {...field}
-                                      value={field.value || 0}
                                       onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                                       className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
                                     />
@@ -494,7 +623,7 @@ const ConfigurePage = () => {
                             />
                             <FormField
                               control={form.control}
-                              name={`profili.${profilo}.percentualeSfrido`}
+                              name={`profiles.${profile.id}.percentualeSfrido`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel className="text-slate-300">Percentuale Sfrido (%)</FormLabel>
@@ -505,7 +634,6 @@ const ConfigurePage = () => {
                                       min="0"
                                       placeholder="5.0"
                                       {...field}
-                                      value={field.value || 5}
                                       onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                                       className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
                                     />
@@ -515,7 +643,7 @@ const ConfigurePage = () => {
                             />
                             <FormField
                               control={form.control}
-                              name={`profili.${profilo}.minimoRiutilizzabile`}
+                              name={`profiles.${profile.id}.minimoRiutilizzabile`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel className="text-slate-300">Minimo Riutilizzabile (m)</FormLabel>
@@ -526,7 +654,6 @@ const ConfigurePage = () => {
                                       min="0"
                                       placeholder="0.5"
                                       {...field}
-                                      value={field.value || 0.5}
                                       onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                                       className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
                                     />
@@ -535,30 +662,33 @@ const ConfigurePage = () => {
                               )}
                             />
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-4 pt-6">
-                  <button
-                    type="button"
-                    onClick={() => form.reset()}
-                    className="px-6 py-3 border-2 border-slate-600 rounded-xl text-white hover:bg-slate-700/50 transition-all duration-200 font-medium"
-                  >
-                    Annulla
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/30 font-medium"
-                  >
-                    Salva Configurazione
-                  </button>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
                 </div>
-              </form>
-            </Form>
-          </div>
+              )}
+
+              <div className="flex justify-end gap-4 pt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    form.reset();
+                    setSerieToEdit(null);
+                  }}
+                  className="px-6 py-3 border-2 border-slate-600 rounded-xl text-white hover:bg-slate-700/50 transition-all duration-200 font-medium"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/30 font-medium"
+                >
+                  {serieToEdit ? 'Aggiorna Serie' : 'Crea Serie'}
+                </button>
+              </div>
+            </form>
+          </Form>
         </div>
       </div>
     </div>
