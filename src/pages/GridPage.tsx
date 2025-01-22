@@ -45,6 +45,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import * as XLSX from 'xlsx';
 
 // Tipi per i dati dal database
 type Tables = Database['public']['Tables']
@@ -387,6 +388,94 @@ type ExistingGrid = {
     total_cost: number;
     details: MaterialCalculation[];
   }>;
+};
+
+// Aggiungi queste funzioni prima del componente GridPage
+const exportToExcelAsList = (grid: ExistingGrid) => {
+  try {
+    // Prepara i dati in formato lista
+    const data = grid.entries.map(entry => ({
+      'Altezza (cm)': entry.height,
+      'Larghezza (cm)': entry.width,
+      'Prezzo Totale (€)': entry.total_cost.toFixed(2),
+      ...entry.details.reduce((acc, detail) => ({
+        ...acc,
+        [`${detail.profileName} - Lunghezza (m)`]: detail.requiredLength.toFixed(2),
+        [`${detail.profileName} - Costo (€)`]: detail.cost.toFixed(2)
+      }), {})
+    }));
+
+    // Crea il workbook e il worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data);
+
+    // Aggiungi il worksheet al workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Lista Prezzi");
+
+    // Scarica il file
+    XLSX.writeFile(wb, `griglia_${grid.series.name}_${grid.frame_types.label}_lista.xlsx`);
+    
+    toast.success("File Excel (lista) esportato con successo!");
+  } catch (error) {
+    console.error('Errore esportazione Excel:', error);
+    toast.error("Errore nell'esportazione del file Excel");
+  }
+};
+
+const exportToExcelAsMatrix = (grid: ExistingGrid) => {
+  try {
+    // Ordina le entries per altezza e larghezza
+    const sortedEntries = [...grid.entries].sort((a, b) => {
+      if (a.height === b.height) return a.width - b.width;
+      return a.height - b.height;
+    });
+
+    // Trova tutte le altezze e larghezze uniche
+    const heights = Array.from(new Set(sortedEntries.map(e => e.height))).sort((a, b) => a - b);
+    const widths = Array.from(new Set(sortedEntries.map(e => e.width))).sort((a, b) => a - b);
+
+    // Crea la matrice dei dati
+    const matrix = [
+      ['', ...widths.map(w => `L: ${w}`)], // Header row
+      ...heights.map(h => {
+        const row = [`H: ${h}`];
+        widths.forEach(w => {
+          const entry = sortedEntries.find(e => e.height === h && e.width === w);
+          row.push(entry ? entry.total_cost.toFixed(2) : '');
+        });
+        return row;
+      })
+    ];
+
+    // Crea il workbook e il worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(matrix);
+
+    // Aggiungi un foglio per i dettagli
+    const detailsData = sortedEntries.map(entry => ({
+      'Altezza (cm)': entry.height,
+      'Larghezza (cm)': entry.width,
+      'Prezzo Totale (€)': entry.total_cost.toFixed(2),
+      ...entry.details.reduce((acc, detail) => ({
+        ...acc,
+        [`${detail.profileName} - Lunghezza (m)`]: detail.requiredLength.toFixed(2),
+        [`${detail.profileName} - Costo (€)`]: detail.cost.toFixed(2)
+      }), {})
+    }));
+    const wsDetails = XLSX.utils.json_to_sheet(detailsData);
+
+    // Aggiungi i worksheet al workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Matrice Prezzi");
+    XLSX.utils.book_append_sheet(wb, wsDetails, "Dettagli");
+
+    // Scarica il file
+    XLSX.writeFile(wb, `griglia_${grid.series.name}_${grid.frame_types.label}_matrice.xlsx`);
+    
+    toast.success("File Excel (matrice) esportato con successo!");
+  } catch (error) {
+    console.error('Errore esportazione Excel:', error);
+    toast.error("Errore nell'esportazione del file Excel");
+  }
 };
 
 const GridPage = () => {
@@ -859,18 +948,42 @@ const GridPage = () => {
                       </span>
                     </div>
                   </AccordionTrigger>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      console.log('Richiesta eliminazione per:', grid.series_id, grid.frame_type_id);
-                      setGridToDelete(`${grid.series_id}|${grid.frame_type_id}`);
-                      setDeleteDialogOpen(true);
-                    }}
-                    className="text-red-400 hover:text-red-300 transition-colors ml-4"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportToExcelAsList(grid);
+                      }}
+                      className="text-green-400 hover:text-green-300 transition-colors p-2 hover:bg-green-500/10 rounded-lg"
+                      title="Esporta come lista"
+                    >
+                      <FileDown className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportToExcelAsMatrix(grid);
+                      }}
+                      className="text-blue-400 hover:text-blue-300 transition-colors p-2 hover:bg-blue-500/10 rounded-lg"
+                      title="Esporta come matrice"
+                    >
+                      <TableIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        console.log('Richiesta eliminazione per:', grid.series_id, grid.frame_type_id);
+                        setGridToDelete(`${grid.series_id}|${grid.frame_type_id}`);
+                        setDeleteDialogOpen(true);
+                      }}
+                      className="text-red-400 hover:text-red-300 transition-colors p-2 hover:bg-red-500/10 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <AccordionContent className="border-t border-slate-700/50">
                   {/* Vista Desktop */}
