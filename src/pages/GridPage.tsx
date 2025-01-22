@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/database.types";
 import {
   Form,
   FormControl,
@@ -30,6 +32,16 @@ import { Download, FileDown, ChevronLeft, Table as TableIcon } from "lucide-reac
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 
+// Tipi per i dati dal database
+type Tables = Database['public']['Tables']
+type Series = Tables['series']['Row'];
+type SeriesFrameType = Tables['series_frame_types']['Row'] & {
+  frame_types: {
+    id: string;
+    label: string;
+  }
+};
+
 // Schema di validazione del form
 const formSchema = z.object({
   serie: z.string().min(1, "Seleziona una serie"),
@@ -57,13 +69,55 @@ type GridResult = {
 
 const GridPage = () => {
   const [results, setResults] = useState<GridResult[]>([]);
+  const [series, setSeries] = useState<Series[]>([]);
+  const [frameTypes, setFrameTypes] = useState<SeriesFrameType[]>([]);
   const navigate = useNavigate();
   
-  // Mock data per le serie configurate - da sostituire con dati reali
-  const serieConfigurate = [
-    { id: "1", nome: "Serie S100", tipologie: ["battente1", "battente2"] },
-    { id: "2", nome: "Serie S200", tipologie: ["scorrevoleLinea", "fisso"] },
-  ];
+  // Carica i dati iniziali
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      // Carica le serie
+      const { data: seriesData, error: seriesError } = await supabase
+        .from('series')
+        .select('*')
+        .order('name');
+
+      if (seriesError) throw seriesError;
+      setSeries(seriesData || []);
+
+      // Le tipologie verranno caricate quando l'utente seleziona una serie
+    } catch (error) {
+      console.error('Errore nel caricamento dei dati:', error);
+      toast.error('Errore nel caricamento dei dati');
+    }
+  };
+
+  // Carica le tipologie quando viene selezionata una serie
+  const loadFrameTypes = async (seriesId: string) => {
+    try {
+      const { data: frameTypesData, error: frameTypesError } = await supabase
+        .from('series_frame_types')
+        .select(`
+          *,
+          frame_types (
+            id,
+            label
+          )
+        `)
+        .eq('series_id', seriesId)
+        .order('frame_type_id');
+
+      if (frameTypesError) throw frameTypesError;
+      setFrameTypes(frameTypesData || []);
+    } catch (error) {
+      console.error('Errore nel caricamento delle tipologie:', error);
+      toast.error('Errore nel caricamento delle tipologie');
+    }
+  };
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -77,6 +131,17 @@ const GridPage = () => {
       incremento: 10,
     },
   });
+
+  // Gestisce il cambio della serie selezionata
+  const handleSeriesChange = (value: string) => {
+    form.setValue('serie', value);
+    form.setValue('tipologia', ''); // Resetta la tipologia
+    if (value) {
+      loadFrameTypes(value);
+    } else {
+      setFrameTypes([]);
+    }
+  };
 
   const onSubmit = (data: FormValues) => {
     console.log("Form submitted:", data);
@@ -139,7 +204,7 @@ const GridPage = () => {
                     <FormItem>
                       <FormLabel className="text-slate-200">Serie</FormLabel>
                       <Select
-                        onValueChange={field.onChange}
+                        onValueChange={handleSeriesChange}
                         defaultValue={field.value}
                       >
                         <FormControl>
@@ -148,13 +213,13 @@ const GridPage = () => {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-slate-800 border-slate-700">
-                          {serieConfigurate.map((serie) => (
+                          {series.map((serie) => (
                             <SelectItem 
                               key={serie.id} 
                               value={serie.id}
                               className="text-slate-200 focus:bg-indigo-500/20 focus:text-white"
                             >
-                              {serie.nome}
+                              {serie.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -172,6 +237,7 @@ const GridPage = () => {
                       <Select
                         onValueChange={field.onChange}
                         defaultValue={field.value}
+                        disabled={!form.watch("serie")}
                       >
                         <FormControl>
                           <SelectTrigger className="bg-slate-800/80 border-slate-700 text-slate-200 focus:ring-2 focus:ring-indigo-500">
@@ -179,18 +245,15 @@ const GridPage = () => {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-slate-800 border-slate-700">
-                          {form.watch("serie") &&
-                            serieConfigurate
-                              .find((s) => s.id === form.watch("serie"))
-                              ?.tipologie.map((tipologia) => (
-                                <SelectItem 
-                                  key={tipologia} 
-                                  value={tipologia}
-                                  className="text-slate-200 focus:bg-indigo-500/20 focus:text-white"
-                                >
-                                  {tipologia}
-                                </SelectItem>
-                              ))}
+                          {frameTypes.map((frameType) => (
+                            <SelectItem 
+                              key={frameType.id} 
+                              value={frameType.frame_type_id}
+                              className="text-slate-200 focus:bg-indigo-500/20 focus:text-white"
+                            >
+                              {frameType.frame_types.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </FormItem>
