@@ -168,19 +168,29 @@ const calculateGrid = async (formData: FormValues): Promise<GridResult[]> => {
   try {
     console.log('Inizio calcolo griglia con dati:', formData);
 
-    // Recupera profili e regole dal database
-    const { data: profiles, error: profilesError } = await supabase
+    // Modifica la query nella funzione calculateGrid
+    const { data: seriesProfiles, error: profilesError } = await supabase
       .from('series_profiles')
-      .select(`
-        *,
-        profile:profiles!inner (
-          name
-        )
-      `)
+      .select('*')
       .eq('series_id', formData.serie);
 
     if (profilesError) throw new Error(`Errore nel recupero dei profili: ${profilesError.message}`);
-    
+
+    // Recupera i dettagli dei profili
+    const profileIds = seriesProfiles?.map(sp => sp.profile_id) || [];
+    const { data: profileDetails, error: profileDetailsError } = await supabase
+      .from('profiles')
+      .select('id, name')
+      .in('id', profileIds);
+
+    if (profileDetailsError) throw new Error(`Errore nel recupero dei dettagli dei profili: ${profileDetailsError.message}`);
+
+    // Combina i dati
+    const profiles = seriesProfiles?.map(sp => ({
+      ...sp,
+      profile: profileDetails?.find(p => p.id === sp.profile_id)
+    }));
+
     console.log('Profili trovati:', profiles?.length || 0, profiles);
 
     const { data: rules, error: rulesError } = await supabase
@@ -245,7 +255,7 @@ const calculateGrid = async (formData: FormValues): Promise<GridResult[]> => {
           barLength: profile.bar_length,
           costPerMeter: profile.cost_per_meter,
           minReusableLength: profile.min_reusable_length,
-          profileName: profile.profile.name
+          profileName: profile.profile?.name || 'Profilo'
         });
       }).filter((material): material is MaterialCalculation => material !== null);
 
@@ -869,7 +879,8 @@ const GridPage = () => {
                   </button>
                 </div>
                 <AccordionContent className="border-t border-slate-700/50">
-                  <div className="overflow-x-auto px-4 py-3">
+                  {/* Vista Desktop */}
+                  <div className="hidden md:block overflow-x-auto px-4 py-3">
                     <table className="min-w-full divide-y divide-slate-700/50">
                       <thead>
                         <tr>
@@ -905,6 +916,48 @@ const GridPage = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Vista Mobile */}
+                  <div className="md:hidden px-4 py-3">
+                    {grid.entries.map((entry, index) => (
+                      <div 
+                        key={`${entry.height}-${entry.width}`} 
+                        className="mb-3 last:mb-0 bg-slate-800/40 rounded-lg p-3"
+                      >
+                        <div className="flex justify-between items-center mb-3">
+                          <div>
+                            <div className="text-sm text-slate-400">Dimensioni</div>
+                            <div className="text-lg font-medium">{entry.height} × {entry.width} cm</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm text-slate-400">Totale</div>
+                            <div className="text-lg font-medium">€{entry.total_cost.toFixed(2)}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-slate-900/30 rounded p-2.5">
+                          {entry.details.map((detail, idx) => (
+                            <div key={idx} className="flex justify-between items-center py-1.5 text-sm text-slate-300">
+                              <span>{detail.profileName}</span>
+                              <div className="text-right">
+                                <span>{detail.requiredLength.toFixed(2)}m</span>
+                                <span className="ml-2 text-slate-400">€{detail.cost.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-end mt-2">
+                          <button
+                            onClick={() => handleEditEntry(`${grid.series_id}-${grid.frame_type_id}`, entry, index)}
+                            className="text-blue-400 hover:text-blue-300 transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </AccordionContent>
               </AccordionItem>
