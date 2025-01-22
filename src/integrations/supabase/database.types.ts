@@ -156,6 +156,41 @@ export interface Database {
           updated_at?: string
         }
       }
+      price_grids: {
+        Row: {
+          id: string
+          series_id: string
+          frame_type_id: string
+          height: number
+          width: number
+          total_cost: number
+          details: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          series_id: string
+          frame_type_id: string
+          height: number
+          width: number
+          total_cost: number
+          details: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          series_id?: string
+          frame_type_id?: string
+          height?: number
+          width?: number
+          total_cost?: number
+          details?: Json
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

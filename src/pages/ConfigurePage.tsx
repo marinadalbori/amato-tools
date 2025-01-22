@@ -566,7 +566,7 @@ const ConfigurePage = () => {
               </div>
 
               {/* Configurazione Profili */}
-              {selectedProfiles && selectedProfiles.length > 0 && (
+              {selectedProfiles && selectedProfiles.length > 0 && form.watch('frameTypeIds').length > 0 && (
                 <div className="space-y-6">
                   <FormLabel className="text-slate-200">Configurazione Profili</FormLabel>
                   <Accordion type="single" collapsible className="space-y-4">

@@ -1,53 +1,13 @@
 import { useEffect, useState } from "react";
-import { PlusIcon, PencilIcon, TrashIcon, ChevronLeftIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, PencilIcon, TrashIcon, ChevronLeft, Square } from "lucide-react";
 import { supabase } from "../integrations/supabase/client";
 import { PostgrestError } from "@supabase/supabase-js";
 import { useNavigate } from "react-router-dom";
+import type { FrameType, Profile, FrameTypeWithRules, SupabaseProfileWithCount } from "@/types/frametypes";
+import type { Database } from "@/integrations/supabase/database.types";
 
-interface SupabaseProfile {
-  id: string;
-  name: string;
-}
-
-interface SupabaseRule {
-  id: string;
-  profile_id: string;
-  height_multiplier: number;
-  width_multiplier: number;
-  profiles: SupabaseProfile | null;
-}
-
-interface SupabaseFrameType {
-  id: string;
-  label: string;
-  frame_type_profile_rules: SupabaseRule[];
-}
-
-interface SupabaseProfileWithCount {
-  id: string;
-  name: string;
-  frame_type_profile_rules: { count: number }[];
-}
-
-interface Profile {
-  id: string;
-  name: string;
-  usageCount: number;
-}
-
-interface FrameType {
-  id: string;
-  label: string;
-  profiles: ProfileAssignment[];
-}
-
-interface ProfileAssignment {
-  profileId: string;
-  profileName: string;
-  heightMultiplier: number;
-  widthMultiplier: number;
-  isDirty?: boolean;
-}
+type Tables = Database['public']['Tables']
+type DbProfile = Tables['profiles']['Row'];
 
 const FrametypesPage = () => {
   const navigate = useNavigate();
@@ -69,81 +29,47 @@ const FrametypesPage = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      console.log('Inizio caricamento dati...');
       
-      // Prima query di test - solo frame_types
-      const { data: frameTypesTest, error: frameTypesTestError } = await supabase
-        .from('frame_types')
-        .select('*');
-
-      console.log('Test frame_types:', { frameTypesTest, frameTypesTestError });
-
-      if (frameTypesTestError) {
-        console.error('Errore nel test iniziale:', frameTypesTestError.message, frameTypesTestError.details, frameTypesTestError.hint);
-        throw frameTypesTestError;
-      }
-
-      if (!frameTypesTest) {
-        console.log('Nessun dato trovato, ma nessun errore - la tabella potrebbe essere vuota');
-        setFrameTypes([]);
-        setProfiles([]);
-        setLoading(false);
-        return;
-      }
-
-      // Se arriviamo qui, la prima query ha funzionato
-      console.log('Prima query riuscita, procedo con le query complete');
-
-      const { data: frameTypesData, error: frameTypesError } = await supabase
-        .from('frame_types')
-        .select(`
-          id,
-          label,
-          frame_type_profile_rules:frame_type_profile_rules (
+      // Esegue le chiamate in parallelo
+      const [frameTypesResponse, profilesResponse] = await Promise.all([
+        supabase
+          .from('frame_types')
+          .select(`
             id,
-            profile_id,
-            height_multiplier,
-            width_multiplier,
-            profiles:profiles (
+            label,
+            frame_type_profile_rules (
               id,
-              name
+              profile_id,
+              height_multiplier,
+              width_multiplier,
+              profiles (
+                id,
+                name
+              )
             )
-          )
-        `) as unknown as { 
-          data: SupabaseFrameType[] | null;
-          error: PostgrestError | null;
-        };
+          `),
+        supabase
+          .from('profiles')
+          .select(`
+            id,
+            name,
+            frame_type_profile_rules (count)
+          `)
+      ]);
 
-      console.log('Risultato query frame_types completa:', { frameTypesData, frameTypesError });
+      if (frameTypesResponse.error) throw frameTypesResponse.error;
+      if (profilesResponse.error) throw profilesResponse.error;
 
-      if (frameTypesError) {
-        console.error('Errore nel caricamento delle tipologie:', frameTypesError.message, frameTypesError.details, frameTypesError.hint);
-        throw frameTypesError;
-      }
-
-      // Carica i profili con conteggio utilizzi
-      const { data: profilesData, error: profilesError } = await supabase
-        .from('profiles')
-        .select(`
-          id,
-          name,
-          frame_type_profile_rules (count)
-        `);
-
-      console.log('Risultato query profiles:', { profilesData, profilesError });
-
-      if (profilesError) {
-        console.error('Errore nel caricamento dei profili:', profilesError.message, profilesError.details, profilesError.hint);
-        throw profilesError;
-      }
+      const frameTypesData = frameTypesResponse.data as unknown as FrameTypeWithRules[];
+      const profilesData = profilesResponse.data as unknown as (DbProfile & { frame_type_profile_rules: { count: number }[] })[];
 
       // Formatta i dati delle tipologie
-      const formattedFrameTypes = (frameTypesData || []).map(type => ({
+      const formattedFrameTypes = frameTypesData.map(type => ({
         id: type.id,
         label: type.label,
-        profiles: ((type.frame_type_profile_rules || []) as SupabaseRule[]).map(rule => ({
+        profiles: type.frame_type_profile_rules.map(rule => ({
           profileId: rule.profile_id,
-          profileName: (rule.profiles as SupabaseProfile)?.name || '',
+          profileName: rule.profiles.name,
           heightMultiplier: rule.height_multiplier,
           widthMultiplier: rule.width_multiplier
         }))
@@ -155,16 +81,13 @@ const FrametypesPage = () => {
         usageCount: profile.frame_type_profile_rules?.length || 0
       }));
 
-      console.log('Dati formattati:', { formattedFrameTypes, formattedProfiles });
-
       setFrameTypes(formattedFrameTypes);
       setProfiles(formattedProfiles);
     } catch (error) {
       console.error('Errore nel caricamento dei dati:', error);
       if (error instanceof Error) {
-        console.error('Dettagli errore:', error.message, error.stack);
+        console.error('Dettagli errore:', error.message);
       }
-      alert('Errore nel caricamento dei dati. Controlla la console per i dettagli.');
     } finally {
       setLoading(false);
     }
@@ -384,8 +307,8 @@ const FrametypesPage = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-xl text-gray-600">Caricamento...</div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="text-xl text-slate-200">Caricamento...</div>
       </div>
     );
   }
@@ -399,14 +322,12 @@ const FrametypesPage = () => {
             onClick={() => navigate('/')}
             className="group flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-slate-800/40 text-slate-300 hover:text-white rounded-xl backdrop-blur-sm hover:bg-slate-700/40 transition-all duration-300 border border-slate-700/50 hover:border-slate-600/50 shadow-lg hover:shadow-xl"
           >
-            <ChevronLeftIcon className="w-5 h-5 transition-transform duration-300 group-hover:-translate-x-1" />
+            <ChevronLeft className="w-5 h-5 transition-transform duration-300 group-hover:-translate-x-1" />
             <span className="font-medium">Home</span>
           </button>
           <h1 className="text-2xl sm:text-3xl font-bold text-white flex items-center gap-3">
             <span className="p-2 bg-indigo-500/10 rounded-xl">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-400">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-              </svg>
+              <Square className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-400" />
             </span>
             Tipologie di Serramento
           </h1>
