@@ -68,18 +68,19 @@ type Profile = {
 
 type ProfileRule = {
   profile_id: string;
-  multiplier_height: number;
-  multiplier_width: number;
+  height_multiplier: number;  // rinominato per chiarezza
+  width_multiplier: number;   // rinominato per chiarezza
 };
 
 type MaterialCalculation = {
   profileName: string;
-  requiredLength: number;
-  lengthWithScrap: number;
-  fullBars: number;
-  leftover: number;
-  isReusable: boolean;
-  cost: number;
+  requiredLength: number;     // lunghezza richiesta senza sfrido
+  lengthWithScrap: number;    // lunghezza con sfrido applicato
+  fullBars: number;          // numero di barre intere necessarie
+  leftover: number;          // materiale avanzato
+  isReusable: boolean;       // se l'avanzo è riutilizzabile
+  cost: number;             // costo finale
+  usedLength: number;       // lunghezza effettivamente utilizzata/fatturata
 };
 
 type GridResult = {
@@ -142,91 +143,113 @@ const calculateProfileMaterial = ({
   minReusableLength: number;
   profileName: string;
 }): MaterialCalculation => {
-  // Converti le dimensioni da centimetri a metri
-  const heightInMeters = height / 100;
-  const widthInMeters = width / 100;
+  // 1. Calcola la lunghezza richiesta in centimetri
+  const requiredLength = (
+    (height * multiplierHeight) + 
+    (width * multiplierWidth)
+  ) / 100; // converti in metri
 
-  const requiredLength = (heightInMeters * multiplierHeight) + (widthInMeters * multiplierWidth);
+  console.log(`Calcolo lunghezza per ${profileName}:`, {
+    height, width,
+    multiplierHeight, multiplierWidth,
+    requiredLength
+  });
+
+  // 2. Applica lo sfrido
   const lengthWithScrap = requiredLength * (1 + scrapPercentage / 100);
+  console.log(`Lunghezza con sfrido (${scrapPercentage}%):`, lengthWithScrap);
+
+  // 3. Calcola il numero di barre necessarie
   const fullBars = Math.ceil(lengthWithScrap / barLength);
+  console.log(`Barre necessarie (lunghezza barra: ${barLength}m):`, fullBars);
+
+  // 4. Calcola il materiale avanzato
   const leftover = (fullBars * barLength) - lengthWithScrap;
   const isReusable = leftover >= minReusableLength;
-  const cost = fullBars * barLength * costPerMeter;
+  console.log('Materiale avanzato:', {
+    leftover,
+    isReusable,
+    minReusableLength
+  });
+
+  // 5. Calcola la lunghezza effettivamente utilizzata/fatturata
+  const usedLength = isReusable ? lengthWithScrap : (fullBars * barLength);
+  console.log('Lunghezza utilizzata:', usedLength);
+
+  // 6. Calcola il costo finale
+  const cost = Number((usedLength * costPerMeter).toFixed(2));
+  console.log(`Costo finale (${costPerMeter}€/m):`, cost);
 
   return {
     profileName,
-    requiredLength,
-    lengthWithScrap,
+    requiredLength: Number(requiredLength.toFixed(3)),
+    lengthWithScrap: Number(lengthWithScrap.toFixed(3)),
     fullBars,
-    leftover,
+    leftover: Number(leftover.toFixed(3)),
     isReusable,
-    cost
+    cost,
+    usedLength: Number(usedLength.toFixed(3))
   };
 };
 
 const calculateGrid = async (formData: FormValues): Promise<GridResult[]> => {
   try {
-    console.log('Inizio calcolo griglia con dati:', formData);
+    console.log('=== INIZIO CALCOLO GRIGLIA ===');
+    console.log('Dati form:', formData);
 
-    // Modifica la query nella funzione calculateGrid
+    // 1. Recupera i profili della serie con join a profiles
     const { data: seriesProfiles, error: profilesError } = await supabase
       .from('series_profiles')
-      .select('*')
+      .select(`
+        *,
+        profiles (
+          id,
+          name
+        )
+      `)
       .eq('series_id', formData.serie);
 
     if (profilesError) throw new Error(`Errore nel recupero dei profili: ${profilesError.message}`);
+    if (!seriesProfiles || seriesProfiles.length === 0) {
+      throw new Error(`Nessun profilo trovato per la serie ${formData.serie}`);
+    }
 
-    // Recupera i dettagli dei profili
-    const profileIds = seriesProfiles?.map(sp => sp.profile_id) || [];
-    const { data: profileDetails, error: profileDetailsError } = await supabase
-      .from('profiles')
-      .select('id, name')
-      .in('id', profileIds);
+    console.log('Profili della serie recuperati:', seriesProfiles);
 
-    if (profileDetailsError) throw new Error(`Errore nel recupero dei dettagli dei profili: ${profileDetailsError.message}`);
-
-    // Combina i dati
-    const profiles = seriesProfiles?.map(sp => ({
-      ...sp,
-      profile: profileDetails?.find(p => p.id === sp.profile_id)
-    }));
-
-    console.log('Profili trovati:', profiles?.length || 0, profiles);
-
+    // 2. Recupera le regole per la tipologia
     const { data: rules, error: rulesError } = await supabase
       .from('frame_type_profile_rules')
       .select('*')
       .eq('frame_type_id', formData.tipologia);
 
     if (rulesError) throw new Error(`Errore nel recupero delle regole: ${rulesError.message}`);
-    
-    console.log('Regole trovate:', rules?.length || 0, rules);
-
-    if (!profiles || profiles.length === 0) {
-      throw new Error(`Nessun profilo trovato per la serie ${formData.serie}`);
-    }
-
     if (!rules || rules.length === 0) {
       throw new Error(`Nessuna regola trovata per la tipologia ${formData.tipologia}`);
     }
 
-    // Filtra i profili che hanno regole associate
-    const profilesWithRules = profiles.filter(profile => {
-      const hasRule = rules.some(rule => rule.profile_id === profile.profile_id);
-      if (!hasRule) {
-        console.log(`Il profilo ${profile.profile_id} non ha regole associate`);
-      }
-      return hasRule;
-    });
+    console.log('Regole recuperate:', rules);
 
-    console.log('Profili con regole:', profilesWithRules.length, profilesWithRules);
+    // 3. Associa i profili alle regole
+    const profilesWithRules = seriesProfiles.map(profile => {
+      const rule = rules.find(r => r.profile_id === profile.profile_id);
+      if (!rule) {
+        console.log(`Nessuna regola trovata per il profilo ${profile.profile_id}`);
+        return null;
+      }
+      return {
+        ...profile,
+        rule,
+        profileName: profile.profiles?.name || profile.profile_id
+      };
+    }).filter((p): p is (typeof seriesProfiles[0] & { rule: typeof rules[0], profileName: string }) => p !== null);
+
+    console.log('Profili con regole:', profilesWithRules);
 
     if (profilesWithRules.length === 0) {
-      throw new Error(`Nessun profilo della serie ${formData.serie} ha regole associate alla tipologia ${formData.tipologia}. 
-        Verifica di aver configurato correttamente le regole per questa combinazione serie/tipologia.`);
+      throw new Error('Nessun profilo ha regole associate per questa combinazione serie/tipologia');
     }
 
-    // Genera dimensioni
+    // 4. Genera le dimensioni
     const dimensions = generateDimensions(
       formData.altezzaMin,
       formData.altezzaMax,
@@ -235,34 +258,34 @@ const calculateGrid = async (formData: FormValues): Promise<GridResult[]> => {
       formData.incremento
     );
 
-    console.log('Dimensioni generate:', dimensions.length);
+    console.log('Dimensioni generate:', dimensions);
 
-    // Calcola la griglia
+    // 5. Calcola la griglia
     return dimensions.map(({ height, width }) => {
       const materials = profilesWithRules.map(profile => {
-        const rule = rules.find(r => r.profile_id === profile.profile_id);
-        if (!rule) {
-          console.warn(`Regola non trovata per il profilo ${profile.profile_id} nonostante il filtro`);
-          return null;
-        }
-
-        return calculateProfileMaterial({
+        const result = calculateProfileMaterial({
           height,
           width,
-          multiplierHeight: rule.height_multiplier,
-          multiplierWidth: rule.width_multiplier,
+          multiplierHeight: profile.rule.height_multiplier,
+          multiplierWidth: profile.rule.width_multiplier,
           scrapPercentage: profile.scrap_percentage,
           barLength: profile.bar_length,
           costPerMeter: profile.cost_per_meter,
           minReusableLength: profile.min_reusable_length,
-          profileName: profile.profile?.name || 'Profilo'
+          profileName: profile.profileName
         });
-      }).filter((material): material is MaterialCalculation => material !== null);
+
+        console.log(`Calcolo per ${profile.profileName} (${height}x${width}):`, result);
+        return result;
+      });
+
+      const totalCost = materials.reduce((sum, mat) => sum + mat.cost, 0);
+      console.log(`Costo totale per ${height}x${width}:`, totalCost);
 
       return {
         height,
         width,
-        totalCost: materials.reduce((sum, mat) => sum + mat.cost, 0),
+        totalCost: Number(totalCost.toFixed(2)),
         materials
       };
     });
@@ -500,6 +523,7 @@ const GridPage = () => {
       larghezzaMax: 0,
       incremento: 10,
     },
+    mode: "onChange"
   });
 
   // Gestisce il cambio della serie selezionata
@@ -532,21 +556,47 @@ const GridPage = () => {
       const gridResults = await calculateGrid(data);
       
       // Prepara i dati per il salvataggio nel database
-      const rowsToSave = gridResults.map(row => ({
+      const rowsToSave: Database['public']['Tables']['price_grids']['Insert'][] = gridResults.map(row => ({
         series_id: data.serie,
         frame_type_id: data.tipologia,
         height: row.height,
         width: row.width,
-        total_cost: row.totalCost,
-        details: row.materials
+        total_cost: Number(row.totalCost.toFixed(2)) || 0, // Assicuriamoci che non sia mai null
+        details: row.materials.map(m => ({
+          profileName: m.profileName,
+          cost: Number(m.cost.toFixed(2)) || 0,
+          requiredLength: Number(m.requiredLength.toFixed(3)) || 0,
+          lengthWithScrap: Number(m.lengthWithScrap.toFixed(3)) || 0,
+          usedLength: Number(m.usedLength.toFixed(3)) || 0,
+          leftover: Number(m.leftover.toFixed(3)) || 0,
+          fullBars: m.fullBars,
+          isReusable: m.isReusable
+        }))
       }));
+
+      console.log('Dati da salvare:', rowsToSave);
+
+      // Verifica che non ci siano valori null o undefined
+      const hasInvalidData = rowsToSave.some(row => 
+        row.total_cost === null || 
+        row.total_cost === undefined || 
+        row.height === null || 
+        row.width === null
+      );
+
+      if (hasInvalidData) {
+        throw new Error('Ci sono valori non validi nei dati da salvare');
+      }
 
       // Salva i risultati nel database
       const { error } = await supabase
         .from('price_grids')
         .insert(rowsToSave);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Errore nel salvataggio:', error);
+        throw error;
+      }
       
       // Ricarica le griglie esistenti
       await loadExistingGrids();
@@ -561,7 +611,7 @@ const GridPage = () => {
       toast.success("Griglia generata e salvata con successo!");
     } catch (error) {
       console.error('Errore:', error);
-      toast.error("Errore nella generazione della griglia");
+      toast.error(error instanceof Error ? error.message : "Errore nella generazione della griglia");
     }
   };
 
@@ -642,6 +692,34 @@ const GridPage = () => {
       toast.error('Errore nell\'aggiornamento del risultato');
     }
   };
+
+  // Modifica il FormField per l'input numerico
+  const NumericFormField = ({ name, label }: { 
+    name: keyof FormValues; 
+    label: string;
+  }) => (
+    <FormField
+      control={form.control}
+      name={name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel className="text-slate-200">{label}</FormLabel>
+          <FormControl>
+            <input
+              type="text"
+              className="flex h-10 w-full rounded-md border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              value={field.value || ''}
+              onChange={e => {
+                const value = e.target.value.replace(/[^0-9]/g, '');
+                field.onChange(value ? parseInt(value) : 0);
+              }}
+              placeholder={`Inserisci ${label.toLowerCase()}`}
+            />
+          </FormControl>
+        </FormItem>
+      )}
+    />
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 py-4 sm:py-8 text-slate-200">
@@ -731,95 +809,11 @@ const GridPage = () => {
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="altezzaMin"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Altezza Minima (cm)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(Number(e.target.value))}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="altezzaMax"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Altezza Massima (cm)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(Number(e.target.value))}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="larghezzaMin"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Larghezza Minima (cm)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(Number(e.target.value))}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="larghezzaMax"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Larghezza Massima (cm)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(Number(e.target.value))}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="incremento"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-slate-200">Incremento (cm)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(Number(e.target.value))}
-                          className="bg-slate-800/80 border-slate-700 text-slate-200 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-indigo-500"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                <NumericFormField name="altezzaMin" label="Altezza Minima (cm)" />
+                <NumericFormField name="altezzaMax" label="Altezza Massima (cm)" />
+                <NumericFormField name="larghezzaMin" label="Larghezza Minima (cm)" />
+                <NumericFormField name="larghezzaMax" label="Larghezza Massima (cm)" />
+                <NumericFormField name="incremento" label="Incremento (cm)" />
               </div>
 
               <div className="flex justify-end pt-6">
